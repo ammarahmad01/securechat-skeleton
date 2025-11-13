@@ -12,6 +12,7 @@ import socket
 import sys
 import datetime as dt
 from pathlib import Path
+from typing import Dict, Any
 
 from cryptography import x509
 from cryptography.hazmat.primitives.asymmetric import padding as asym_padding
@@ -80,9 +81,69 @@ def send_json(sock: socket.socket, data: dict) -> None:
     sock.sendall(payload)
 
 
-def _chat_phase(sock: socket.socket) -> None:
-    # Placeholder for Step VII: secure chat session
-    print("[chat] Chat phase stub reached. Implement in next step.")
+def _chat_phase(sock: socket.socket, session: Dict[str, Any], server_cert: x509.Certificate, client_priv_key_path: Path) -> None:
+    from crypto import aes as aesmod
+    from crypto import sign as signmod
+    from common.utils import now_ms, b64e, b64d
+    from cryptography.hazmat.primitives import serialization
+
+    with open(client_priv_key_path, "rb") as f:
+        my_priv = serialization.load_pem_private_key(f.read(), password=None)
+
+    print("[chat] Type messages and press Enter. Type '/quit' to exit.")
+    while True:
+        try:
+            text = input("> ").rstrip("\n")
+        except EOFError:
+            break
+        if not text:
+            continue
+        if text.strip().lower() in {"/quit", "quit", ":q"}:
+            send_json(sock, {"type": "bye"})
+            break
+
+        # Send encrypted+signed message
+        session["seqno"] += 1
+        seq = session["seqno"]
+        ts = now_ms()
+        iv, ct = aesmod.encrypt_aes_cbc(session["key"], text.encode("utf-8"))
+        h = signmod.compute_message_hash(seq, ts, ct)
+        sig = signmod.sign_hash(my_priv, h)
+        send_json(sock, {"type": "msg", "seqno": seq, "ts": ts, "iv": b64e(iv), "ct": b64e(ct), "sig": b64e(sig)})
+        print(f"[INFO] Sent message #{seq} (timestamp={ts})")
+
+        # Try to receive a response (echo)
+        try:
+            reply = recv_json(sock)
+        except Exception:
+            continue
+        if reply.get("type") != "msg":
+            continue
+        try:
+            rseq = int(reply["seqno"])  # type: ignore
+            rts = int(reply["ts"])  # type: ignore
+            riv = b64d(reply["iv"])  # type: ignore
+            rct = b64d(reply["ct"])  # type: ignore
+            rsig = b64d(reply["sig"])  # type: ignore
+        except Exception:
+            print("[WARNING] Malformed reply; dropped")
+            continue
+
+        # Verify signature from server
+        try:
+            hh = signmod.compute_message_hash(rseq, rts, rct)
+            server_cert.public_key().verify(rsig, hh, asym_padding.PKCS1v15(), __import__("cryptography.hazmat.primitives.hashes", fromlist=['SHA256']).SHA256())
+        except Exception:
+            print("[ERROR] Reply signature verification failed")
+            continue
+        try:
+            plain = aesmod.decrypt_aes_cbc(session["key"], riv, rct)
+            rtext = plain.decode("utf-8", errors="replace")
+        except Exception as e:
+            print(f"[ERROR] Reply decryption failed: {e}")
+            continue
+        print(f"[INFO] Received message #{rseq} from server — verified and decrypted")
+        # Note: client can append transcript too if desired
 
 
 def main() -> None:
@@ -178,12 +239,15 @@ def main() -> None:
                     "session_id": __import__("uuid").uuid4().hex,
                     "peer_fingerprint": server_cert.fingerprint(__import__("cryptography.hazmat.primitives.hashes", fromlist=['SHA256']).SHA256()).hex(),
                     "seqno": 0,
+                    "rx_last_seq": 0,
                     # key stored in-memory only
                     "key": K_sess,
                 }
                 print(f"[INFO] Session key established, session_id={session['session_id']}, seqno=0")
                 print("[SUCCESS] User authenticated — entering main chat session")
-                _chat_phase(s)
+                root = project_root()
+                client_key_path = root / "certs" / "client-key.pem"
+                _chat_phase(s, session, server_cert, client_key_path)
 
 
 if __name__ == "__main__":

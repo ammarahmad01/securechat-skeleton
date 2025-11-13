@@ -238,12 +238,80 @@ def handle_client(conn: socket.socket, ca_cert_path: Path, server_cert_path: Pat
                     "session_id": uuid.uuid4().hex,
                     "peer_fingerprint": client_cert.fingerprint(hashes.SHA256()).hex(),
                     "seqno": 0,
-                    # Do NOT log or transmit K
+                    "rx_last_seq": 0,
+                    "key": K,
+                    "peer_cert": client_cert,
                 }
                 print(
                     f"[INFO] Session DH completed — session key derived and stored; "
                     f"session_id={session['session_id']}, seqno={session['seqno']}"
                 )
+
+                # ---- Encrypted chat message loop (verify -> decrypt -> transcript -> ack) ----
+                from cryptography.hazmat.primitives import serialization
+                from crypto import aes as aesmod
+                from crypto import sign as signmod
+                from common.utils import now_ms, b64e, b64d
+
+                root_dir = Path(__file__).resolve().parent.parent
+                server_key_path = root_dir / "certs" / "server-key.pem"
+                with open(server_key_path, "rb") as f:
+                    server_priv = serialization.load_pem_private_key(f.read(), password=None)
+
+                while True:
+                    try:
+                        chat = recv_json(conn)
+                    except Exception:
+                        break
+                    if chat.get("type") != "msg":
+                        if chat.get("type") in {"bye", "quit"}:
+                            break
+                        continue
+                    try:
+                        seqno = int(chat["seqno"])  # type: ignore
+                        ts = int(chat["ts"])  # type: ignore
+                        iv = b64d(chat["iv"])  # type: ignore
+                        ct = b64d(chat["ct"])  # type: ignore
+                        sig = b64d(chat["sig"])  # type: ignore
+                    except Exception:
+                        print("[WARNING] Malformed message; dropped")
+                        continue
+
+                    if seqno <= session["rx_last_seq"]:
+                        print("[WARNING] Replay or out-of-order message detected — dropped")
+                        continue
+
+                    hmsg = signmod.compute_message_hash(seqno, ts, ct)
+                    try:
+                        session["peer_cert"].public_key().verify(
+                            sig, hmsg, asym_padding.PKCS1v15(), hashes.SHA256()
+                        )
+                    except Exception:
+                        print("[ERROR] Signature verification failed")
+                        continue
+
+                    try:
+                        plain = aesmod.decrypt_aes_cbc(session["key"], iv, ct)
+                        text = plain.decode("utf-8", errors="replace")
+                    except Exception as e:
+                        print(f"[ERROR] Decryption failed: {e}")
+                        continue
+
+                    session["rx_last_seq"] = seqno
+                    print(f"[INFO] Received message #{seqno} from peer — verified and decrypted")
+
+                    from storage.transcript import append_line
+                    append_line(session["session_id"], seqno, ts, b64e(ct), b64e(sig), session["peer_fingerprint"], root=root_dir)
+
+                    # Send encrypted+signed ACK echo
+                    session["seqno"] += 1
+                    sseq = session["seqno"]
+                    sts = now_ms()
+                    ack_text = f"ack: {text}"
+                    iv2, ct2 = aesmod.encrypt_aes_cbc(session["key"], ack_text.encode("utf-8"))
+                    h2 = signmod.compute_message_hash(sseq, sts, ct2)
+                    sig2 = signmod.sign_hash(server_priv, h2)
+                    send_json(conn, {"type": "msg", "seqno": sseq, "ts": sts, "iv": b64e(iv2), "ct": b64e(ct2), "sig": b64e(sig2)})
     except Exception as e:
         print(f"[!] Error handling client: {e}")
     finally:
