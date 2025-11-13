@@ -1,0 +1,49 @@
+cat > .gitignore <<'EOF'
+# ------------------------------
+# Python artifacts
+# ------------------------------
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# ------------------------------
+# Environment files
+# ------------------------------
+.env
+.env.*
+
+# ------------------------------
+# Certificates and keys
+# (do NOT commit private keys or certificates)
+# ------------------------------
+/certs/
+*.pem
+*.key
+*.crt
+*.csr
+
+# ------------------------------
+# Database files
+# ------------------------------
+*.db
+*.sqlite3
+*.sql
+db/dump.sql
+
+# ------------------------------
+# Logs
+# ------------------------------
+logs/
+*.log
+
+# ------------------------------
+# IDE / OS files
+# ------------------------------
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# End of .gitignore
+EOF
