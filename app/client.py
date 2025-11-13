@@ -80,6 +80,11 @@ def send_json(sock: socket.socket, data: dict) -> None:
     sock.sendall(payload)
 
 
+def _chat_phase(sock: socket.socket) -> None:
+    # Placeholder for Step VII: secure chat session
+    print("[chat] Chat phase stub reached. Implement in next step.")
+
+
 def main() -> None:
     host = os.getenv("SERVER_HOST", "127.0.0.1")
     port = int(os.getenv("SERVER_PORT", "5000"))
@@ -154,7 +159,11 @@ def main() -> None:
             iv, ct = aesmod.encrypt_aes_cbc(K, plain)
             send_json(s, {"type": "login_encrypted", "iv": base64.b64encode(iv).decode(), "ciphertext": base64.b64encode(ct).decode()})
             ack = recv_json(s)
-            print(f"[login] status: {ack.get('status')}")
+            status = ack.get('status')
+            print(f"[login] status: {status}")
+            if status == "ok":
+                print("[SUCCESS] User authenticated — entering main chat session")
+                _chat_phase(s)
 
 
 if __name__ == "__main__":

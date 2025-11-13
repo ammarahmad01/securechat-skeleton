@@ -206,6 +206,9 @@ def handle_client(conn: socket.socket, ca_cert_path: Path, server_cert_path: Pat
             except Exception as e:
                 print(f"[!] DB error on login: {e}")
             send_json(conn, {"type": "login_ack", "status": "ok" if ok else "fail"})
+            if ok:
+                ident = email or username or "<unknown>"
+                print(f"[INFO] User {ident} authenticated successfully")
     except Exception as e:
         print(f"[!] Error handling client: {e}")
     finally:
