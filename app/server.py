@@ -22,6 +22,10 @@ from cryptography import x509
 from cryptography.hazmat.primitives.asymmetric import padding as asym_padding
 from cryptography.hazmat.primitives import hashes
 
+from crypto import dh as dhmod
+from crypto import aes as aesmod
+from storage import db as dbmod
+
 try:
     from dotenv import load_dotenv
     load_dotenv()
@@ -132,6 +136,76 @@ def handle_client(conn: socket.socket, ca_cert_path: Path, server_cert_path: Pat
         }
         send_json(conn, reply)
         print("[+] Server hello sent to client")
+
+        # ---- Ephemeral DH key exchange ----
+        msg = recv_json(conn)
+        mtype = msg.get("type")
+        if mtype not in ("dh client", "dh_client"):
+            send_json(conn, {"type": "error", "err": "EXPECTED DH"})
+            return
+        try:
+            g = int(msg["g"])
+            p = int(msg["p"])
+            A = int(msg["A"])
+        except Exception:
+            send_json(conn, {"type": "error", "err": "BAD DH"})
+            return
+
+        b = dhmod.gen_private(p)
+        B = dhmod.compute_pub(g, b, p)
+        Ks = dhmod.compute_shared(A, b, p)
+        K = dhmod.derive_key(Ks)
+
+        send_json(conn, {"type": "dh server", "B": B})
+
+        # ---- Encrypted control-plane commands ----
+        cmd = recv_json(conn)
+        ctype = cmd.get("type")
+        if ctype not in ("register_encrypted", "login_encrypted"):
+            send_json(conn, {"type": "error", "err": "EXPECTED ENCRYPTED"})
+            return
+
+        try:
+            iv = base64.b64decode(cmd["iv"])  # 16 bytes
+            ct = base64.b64decode(cmd["ciphertext"]) 
+        except Exception:
+            send_json(conn, {"type": "error", "err": "BAD CIPHERTEXT"})
+            return
+
+        try:
+            plain = aesmod.decrypt_aes_cbc(K, iv, ct)
+            payload = json.loads(plain.decode("utf-8"))
+        except Exception as e:
+            send_json(conn, {"type": "error", "err": "DECRYPT FAIL"})
+            print(f"[!] Decrypt/parse error: {e}")
+            return
+
+        if ctype == "register_encrypted":
+            email = payload.get("email")
+            username = payload.get("username")
+            password = payload.get("password")
+            ok = False
+            try:
+                dbmod.init_db()
+                ok = dbmod.create_user(email, username, password)
+            except Exception as e:
+                print(f"[!] DB error on register: {e}")
+            send_json(conn, {"type": "register_ack", "status": "ok" if ok else "fail"})
+            if ok:
+                print(f"[+] Registered new user: {username}")
+        else:  # login_encrypted
+            email = payload.get("email")
+            username = payload.get("username")
+            password = payload.get("password")
+            ok = False
+            try:
+                if email:
+                    ok = dbmod.verify_user_by_email(email, password)
+                elif username:
+                    ok = dbmod.verify_user(username, password)
+            except Exception as e:
+                print(f"[!] DB error on login: {e}")
+            send_json(conn, {"type": "login_ack", "status": "ok" if ok else "fail"})
     except Exception as e:
         print(f"[!] Error handling client: {e}")
     finally:

@@ -152,6 +152,28 @@ __all__ = [
 	"init_db",
 	"create_user",
 	"verify_user",
+	"verify_user_by_email",
 	"get_public_user",
 ]
+
+def _get_auth_row_by_email(email: str) -> Optional[Tuple[bytes, str]]:
+	sql = "SELECT salt, pwd_hash FROM users WHERE email=%s"
+	with get_conn() as conn:
+		with conn.cursor() as cur:
+			cur.execute(sql, (email,))
+			res = cur.fetchone()
+			if not res:
+				return None
+			return res[0], res[1]
+
+
+def verify_user_by_email(email: str, password: str) -> bool:
+	if not email or not password:
+		return False
+	row = _get_auth_row_by_email(email)
+	if not row:
+		return False
+	salt, stored_hex = row
+	calc_hex = _hash_password(salt, password)
+	return hmac.compare_digest(calc_hex, stored_hex)
 

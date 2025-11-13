@@ -16,6 +16,9 @@ from pathlib import Path
 from cryptography import x509
 from cryptography.hazmat.primitives.asymmetric import padding as asym_padding
 
+from crypto import dh as dhmod
+from crypto import aes as aesmod
+
 try:
     from dotenv import load_dotenv
     load_dotenv()
@@ -106,6 +109,52 @@ def main() -> None:
         ca_cert = load_cert(ca_cert_path)
         verify_server_cert(server_cert, ca_cert)
         print("[+] Handshake OK. Received server_hello.")
+
+        # ---- Ephemeral DH exchange ----
+        p, g = dhmod.get_group()
+        a = dhmod.gen_private(p)
+        A = dhmod.compute_pub(g, a, p)
+        send_json(s, {"type": "dh client", "g": g, "p": p, "A": A})
+        resp = recv_json(s)
+        if resp.get("type") != "dh server":
+            raise SystemExit("DH failed: bad server reply")
+        B = int(resp["B"])  # type: ignore
+        Ks = dhmod.compute_shared(B, a, p)
+        K = dhmod.derive_key(Ks)
+
+        # ---- Choose action: register or login ----
+        mode = input("Register (r) or Login (l)? ").strip().lower() or "r"
+        if mode.startswith("r"):
+            email = input("Email: ").strip()
+            username = input("Username: ").strip()
+            password = input("Password: ").strip()
+            plain = json.dumps({
+                "type": "register",
+                "email": email,
+                "username": username,
+                "password": password,
+            }).encode("utf-8")
+            iv, ct = aesmod.encrypt_aes_cbc(K, plain)
+            send_json(s, {"type": "register_encrypted", "iv": base64.b64encode(iv).decode(), "ciphertext": base64.b64encode(ct).decode()})
+            ack = recv_json(s)
+            print(f"[register] status: {ack.get('status')}")
+        else:
+            # login
+            # Support login by email or username; prefer email if provided
+            by_email = input("Login with email? (y/N): ").strip().lower().startswith("y")
+            if by_email:
+                email = input("Email: ").strip()
+                password = input("Password: ").strip()
+                payload = {"type": "login", "email": email, "password": password}
+            else:
+                username = input("Username: ").strip()
+                password = input("Password: ").strip()
+                payload = {"type": "login", "username": username, "password": password}
+            plain = json.dumps(payload).encode("utf-8")
+            iv, ct = aesmod.encrypt_aes_cbc(K, plain)
+            send_json(s, {"type": "login_encrypted", "iv": base64.b64encode(iv).decode(), "ciphertext": base64.b64encode(ct).decode()})
+            ack = recv_json(s)
+            print(f"[login] status: {ack.get('status')}")
 
 
 if __name__ == "__main__":
