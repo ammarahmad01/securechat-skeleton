@@ -85,6 +85,7 @@ def _chat_phase(sock: socket.socket, session: Dict[str, Any], server_cert: x509.
     from crypto import aes as aesmod
     from crypto import sign as signmod
     from common.utils import now_ms, b64e, b64d
+    from storage.transcript import append_line, compute_transcript_sha256
     from cryptography.hazmat.primitives import serialization
 
     with open(client_priv_key_path, "rb") as f:
@@ -143,7 +144,31 @@ def _chat_phase(sock: socket.socket, session: Dict[str, Any], server_cert: x509.
             print(f"[ERROR] Reply decryption failed: {e}")
             continue
         print(f"[INFO] Received message #{rseq} from server — verified and decrypted")
-        # Note: client can append transcript too if desired
+        # Append transcript line for verified reply
+        root = project_root()
+        append_line(session["session_id"], rseq, rts, b64e(rct), b64e(rsig), session["peer_fingerprint"], root=root)
+
+    # On exit: generate receipt for client's transcript
+    try:
+        root = project_root()
+        tfile = root / "transcripts" / f"session_{session['session_id']}.log"
+        if tfile.exists():
+            th = compute_transcript_sha256(tfile)
+            receipt = {
+                "type": "receipt",
+                "peer": "server",
+                "first_seq": 1,  # client transcript contains replies starting at 1 typically
+                "last_seq": session.get("rx_last_seq", 0) or 0,
+                "transcript_sha256": th,
+            }
+            raw = bytes.fromhex(th)
+            sig_r = signmod.sign_hash(my_priv, raw)
+            receipt["sig"] = b64e(sig_r)
+            rpath = root / "transcripts" / f"session_{session['session_id']}_receipt.json"
+            rpath.write_text(json.dumps(receipt, indent=2), encoding="utf-8")
+            print("[INFO] Session receipt generated and signed (client).")
+    except Exception as e:
+        print(f"[WARNING] Failed to generate client receipt: {e}")
 
 
 def main() -> None:

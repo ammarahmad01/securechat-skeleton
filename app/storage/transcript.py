@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import hashlib
 
 
 def _ensure_dir(p: Path) -> None:
@@ -25,5 +26,10 @@ def append_line(session_id: str, seqno: int, ts_ms: int, ct_b64: str, sig_b64: s
 	return tfile
 
 
-__all__ = ["append_line"]
+def compute_transcript_sha256(tfile: Path) -> str:
+	data = tfile.read_bytes()
+	return hashlib.sha256(data).hexdigest()
+
+
+__all__ = ["append_line", "compute_transcript_sha256"]
 

@@ -252,12 +252,15 @@ def handle_client(conn: socket.socket, ca_cert_path: Path, server_cert_path: Pat
                 from crypto import aes as aesmod
                 from crypto import sign as signmod
                 from common.utils import now_ms, b64e, b64d
+                from storage.transcript import append_line, compute_transcript_sha256
 
                 root_dir = Path(__file__).resolve().parent.parent
                 server_key_path = root_dir / "certs" / "server-key.pem"
                 with open(server_key_path, "rb") as f:
                     server_priv = serialization.load_pem_private_key(f.read(), password=None)
 
+                first_seq_logged = None
+                last_seq_logged = None
                 while True:
                     try:
                         chat = recv_json(conn)
@@ -300,8 +303,10 @@ def handle_client(conn: socket.socket, ca_cert_path: Path, server_cert_path: Pat
                     session["rx_last_seq"] = seqno
                     print(f"[INFO] Received message #{seqno} from peer — verified and decrypted")
 
-                    from storage.transcript import append_line
                     append_line(session["session_id"], seqno, ts, b64e(ct), b64e(sig), session["peer_fingerprint"], root=root_dir)
+                    if first_seq_logged is None:
+                        first_seq_logged = seqno
+                    last_seq_logged = seqno
 
                     # Send encrypted+signed ACK echo
                     session["seqno"] += 1
@@ -312,6 +317,30 @@ def handle_client(conn: socket.socket, ca_cert_path: Path, server_cert_path: Pat
                     h2 = signmod.compute_message_hash(sseq, sts, ct2)
                     sig2 = signmod.sign_hash(server_priv, h2)
                     send_json(conn, {"type": "msg", "seqno": sseq, "ts": sts, "iv": b64e(iv2), "ct": b64e(ct2), "sig": b64e(sig2)})
+
+                # ---- On session end: generate and sign receipt ----
+                try:
+                    tfile = (root_dir / "transcripts" / f"session_{session['session_id']}.log")
+                    if tfile.exists() and first_seq_logged is not None and last_seq_logged is not None:
+                        th = compute_transcript_sha256(tfile)
+                        receipt = {
+                            "type": "receipt",
+                            "peer": "client",
+                            "first_seq": int(first_seq_logged),
+                            "last_seq": int(last_seq_logged),
+                            "transcript_sha256": th,
+                        }
+                        # Sign hash (hex -> bytes)
+                        raw = bytes.fromhex(th)
+                        sig_r = signmod.sign_hash(server_priv, raw)
+                        from common.utils import b64e as _b64e
+                        receipt["sig"] = _b64e(sig_r)
+
+                        rpath = root_dir / "transcripts" / f"session_{session['session_id']}_receipt.json"
+                        rpath.write_text(json.dumps(receipt, indent=2), encoding="utf-8")
+                        print("[INFO] Session receipt generated and signed.")
+                except Exception as e:
+                    print(f"[WARNING] Failed to generate receipt: {e}")
     except Exception as e:
         print(f"[!] Error handling client: {e}")
     finally:

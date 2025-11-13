@@ -1,4 +1,3 @@
-
 # SecureChat – Assignment #2 (CS-3002 Information Security, Fall 2025)
 
 This repository is the **official code skeleton** for your Assignment #2.  
@@ -6,18 +5,19 @@ You will build a **console-based, PKI-enabled Secure Chat System** in **Python**
 
 **Confidentiality, Integrity, Authenticity, and Non-Repudiation (CIANR)**.
 
-
 ## 🧩 Overview
 
 You are provided only with the **project skeleton and file hierarchy**.  
 Each file contains docstrings and `TODO` markers describing what to implement.
 
 Your task is to:
+
 - Implement the **application-layer protocol**.
 - Integrate cryptographic primitives correctly to satisfy the assignment spec.
 - Produce evidence of security properties via Wireshark, replay/tamper tests, and signed session receipts.
 
 ## 🏗️ Folder Structure
+
 ```
 securechat-skeleton/
 ├─ app/
@@ -52,6 +52,7 @@ securechat-skeleton/
    All development and commits must be performed in your fork.
 
 2. **Set up environment**:
+
    ```bash
    python3 -m venv .venv && source .venv/bin/activate
    pip install -r requirements.txt
@@ -59,16 +60,19 @@ securechat-skeleton/
    ```
 
 3. **Initialize MySQL** (recommended via Docker):
+
    ```bash
    docker run -d --name securechat-db        -e MYSQL_ROOT_PASSWORD=rootpass        -e MYSQL_DATABASE=securechat        -e MYSQL_USER=scuser        -e MYSQL_PASSWORD=scpass        -p 3306:3306 mysql:8
    ```
 
 4. **Create tables**:
+
    ```bash
    python -m app.storage.db --init
    ```
 
 5. **Generate certificates** (after implementing the scripts):
+
    ```bash
    python scripts/gen_ca.py --name "FAST-NU Root CA"
    python scripts/gen_cert.py --cn server.local --out certs/server
@@ -108,4 +112,27 @@ When submitting on Google Classroom (GCR):
 ✔ Invalid/self-signed cert rejected (`BAD_CERT`)  
 ✔ Tamper test → signature verification fails (`SIG_FAIL`)  
 ✔ Replay test → rejected by seqno (`REPLAY`)  
-✔ Non-repudiation → exported transcript + signed SessionReceipt verified offline  
+✔ Non-repudiation → exported transcript + signed SessionReceipt verified offline
+
+## 📜 Transcript Verification
+
+After a chat session ends, the server writes a transcript and a signed receipt under `transcripts/`:
+
+- `transcripts/session_<id>.log`: append-only log of verified messages
+- `transcripts/session_<id>_receipt.json`: includes `transcript_sha256` and a signature by the server
+
+Verify the transcript against the receipt offline using the provided tool:
+
+PowerShell (Windows):
+
+```
+python tools/verify_transcript.py `
+   --transcript transcripts/session_<id>.log `
+   --receipt transcripts/session_<id>_receipt.json `
+   --cert certs/server-cert.pem
+```
+
+Notes:
+
+- Use `certs/client-cert.pem` if verifying a client-signed receipt.
+- The tool exits with code `0` on success and `1` on failure.
