@@ -16,6 +16,7 @@ import os
 import socket
 import sys
 import datetime as dt
+import uuid
 from pathlib import Path
 
 from cryptography import x509
@@ -209,6 +210,40 @@ def handle_client(conn: socket.socket, ca_cert_path: Path, server_cert_path: Pat
             if ok:
                 ident = email or username or "<unknown>"
                 print(f"[INFO] User {ident} authenticated successfully")
+
+                # ---- New session DH exchange (data-plane key) ----
+                print("[INFO] Session DH exchange started")
+                sess_req = recv_json(conn)
+                if sess_req.get("type") != "session_dh_client":
+                    print("[!] Expected session_dh_client; closing")
+                    return
+                try:
+                    p = int(sess_req["p"])  # type: ignore
+                    g = int(sess_req["g"])  # type: ignore
+                    A = int(sess_req["A"])  # type: ignore
+                except Exception:
+                    send_json(conn, {"type": "error", "err": "BAD SESSION DH"})
+                    return
+
+                b = dhmod.gen_private(p)
+                B = dhmod.compute_pub(g, b, p)
+                Ks = dhmod.compute_shared(A, b, p)
+                K = dhmod.derive_key(Ks)
+
+                # Reply with server part
+                send_json(conn, {"type": "session_dh_server", "B": B})
+
+                # Session metadata (in-memory only)
+                session = {
+                    "session_id": uuid.uuid4().hex,
+                    "peer_fingerprint": client_cert.fingerprint(hashes.SHA256()).hex(),
+                    "seqno": 0,
+                    # Do NOT log or transmit K
+                }
+                print(
+                    f"[INFO] Session DH completed — session key derived and stored; "
+                    f"session_id={session['session_id']}, seqno={session['seqno']}"
+                )
     except Exception as e:
         print(f"[!] Error handling client: {e}")
     finally:

@@ -162,6 +162,26 @@ def main() -> None:
             status = ack.get('status')
             print(f"[login] status: {status}")
             if status == "ok":
+                # ---- Fresh session DH for data-plane key ----
+                p, g = dhmod.get_group()
+                a2 = dhmod.gen_private(p)
+                A2 = dhmod.compute_pub(g, a2, p)
+                send_json(s, {"type": "session_dh_client", "p": p, "g": g, "A": A2})
+                sess_reply = recv_json(s)
+                if sess_reply.get("type") != "session_dh_server":
+                    raise SystemExit("Session DH failed: bad reply")
+                B2 = int(sess_reply["B"])  # type: ignore
+                Ks2 = dhmod.compute_shared(B2, a2, p)
+                K_sess = dhmod.derive_key(Ks2)
+
+                session = {
+                    "session_id": __import__("uuid").uuid4().hex,
+                    "peer_fingerprint": server_cert.fingerprint(__import__("cryptography.hazmat.primitives.hashes", fromlist=['SHA256']).SHA256()).hex(),
+                    "seqno": 0,
+                    # key stored in-memory only
+                    "key": K_sess,
+                }
+                print(f"[INFO] Session key established, session_id={session['session_id']}, seqno=0")
                 print("[SUCCESS] User authenticated — entering main chat session")
                 _chat_phase(s)
 
