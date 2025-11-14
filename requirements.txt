@@ -3,3 +3,4 @@ PyMySQL
 python-dotenv
 pydantic
 rich
+python-docx

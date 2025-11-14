@@ -249,7 +249,6 @@ def handle_client(conn: socket.socket, ca_cert_path: Path, server_cert_path: Pat
 
                 # ---- Encrypted chat message loop (verify -> decrypt -> transcript -> ack) ----
                 from cryptography.hazmat.primitives import serialization
-                from crypto import aes as aesmod
                 from crypto import sign as signmod
                 from common.utils import now_ms, b64e, b64d
                 from storage.transcript import append_line, compute_transcript_sha256
@@ -358,6 +357,14 @@ def main() -> None:
     root = project_root()
     ca_cert_path = root / "certs" / "ca.cert.pem"
     server_cert_path = root / "certs" / "server-cert.pem"
+
+    # Ensure DB schema exists on startup (no-op if already created)
+    try:
+        from storage import db as _dbmod
+        _dbmod.init_db()
+        print("[INFO] Database schema ensured (users table).")
+    except Exception as e:
+        print(f"[WARNING] Could not initialize database schema: {e}")
 
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
