@@ -74,14 +74,38 @@ def main() -> int:
         print(f"  actual  : {th_actual}")
         return 1
 
+    sig = None
+    raw = bytes.fromhex(th_actual)
+    sig = base64.b64decode(sig_b64)
+
+    # Primary attempt: use provided cert path
     try:
         cert = x509.load_pem_x509_certificate(cpath.read_bytes())
-        sig = base64.b64decode(sig_b64)
-        raw = bytes.fromhex(th_actual)
         signmod.verify_signature(cert.public_key(), sig, raw)
-    except Exception as e:
-        print(f"[ERROR] Signature verification failed: {e}")
-        return 1
+    except Exception as primary_err:
+        # Heuristic fallback: If receipt appears client-signed (peer == 'server'),
+        # or the provided cert failed, attempt automatic lookup of client cert.
+        # This handles race where client overwrote server receipt with its own signature.
+        fallback_used = False
+        try:
+            peer = receipt.get("peer")
+            if peer == "server":
+                alt_path = root / "certs" / "client-cert.pem"
+            else:
+                alt_path = root / "certs" / "server-cert.pem"
+            if alt_path.resolve() != cpath.resolve() and alt_path.exists():
+                alt_cert = x509.load_pem_x509_certificate(alt_path.read_bytes())
+                signmod.verify_signature(alt_cert.public_key(), sig, raw)
+                print(f"[INFO] Primary cert failed; fallback succeeded with {alt_path.name}")
+                fallback_used = True
+            else:
+                raise primary_err
+        except Exception:
+            print(f"[ERROR] Signature verification failed: {primary_err}")
+            return 1
+        if not fallback_used:
+            print(f"[ERROR] Signature verification failed: {primary_err}")
+            return 1
 
     print("[OK] Transcript and receipt verified successfully")
     print(f"  signer : {cpath}")

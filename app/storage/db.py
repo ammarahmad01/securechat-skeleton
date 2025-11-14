@@ -32,12 +32,13 @@ import pymysql
 def _get_db_config() -> Dict[str, Any]:
 	host = os.getenv("DB_HOST", "localhost")
 	user = os.getenv("DB_USER")
-	password = os.getenv("DB_PASS")
+	# Allow blank password (common in local XAMPP)
+	password = os.getenv("DB_PASS", "")
 	database = os.getenv("DB_NAME")
 	port_s = os.getenv("DB_PORT")
 	port = int(port_s) if port_s and port_s.isdigit() else 3306
 
-	missing = [k for k, v in {"DB_USER": user, "DB_PASS": password, "DB_NAME": database}.items() if not v]
+	missing = [k for k, v in {"DB_USER": user, "DB_NAME": database}.items() if not v]
 	if missing:
 		raise RuntimeError(f"Missing required DB env vars: {', '.join(missing)}")
 

@@ -1,4 +1,3 @@
-cat > .gitignore <<'EOF'
 # ------------------------------
 # Python artifacts
 # ------------------------------
@@ -17,7 +16,7 @@ __pycache__/
 # Certificates and keys
 # (do NOT commit private keys or certificates)
 # ------------------------------
-/certs/
+certs/
 *.pem
 *.key
 *.crt
@@ -28,14 +27,26 @@ __pycache__/
 # ------------------------------
 *.db
 *.sqlite3
-*.sql
-db/dump.sql
+# Keep SQL schema/dumps tracked
+#!*.sql
+!db/schema.sql
+!db/dump.sql
 
 # ------------------------------
-# Logs
+# Logs & transcripts
 # ------------------------------
 logs/
 *.log
+transcripts/*
+!transcripts/.keep
+
+# ------------------------------
+# Tests artifacts
+# ------------------------------
+tests/pcaps/*
+!tests/pcaps/.gitkeep
+tests/logs/*
+!tests/logs/.gitkeep
 
 # ------------------------------
 # IDE / OS files
@@ -46,4 +57,3 @@ logs/
 Thumbs.db
 
 # End of .gitignore
-EOF
